@@ -22,41 +22,47 @@ def numpy_to_image(array: np.ndarray) -> Image.Image:
     return Image.fromarray(array)
 
 
-def check_super_resolution_output_dir() -> Path:
+def check_super_resolution_output_dir() -> tuple[Path, Path]:
     """
     Determine the appropriate super-resolution output directory based on the scale factor.
     
     Returns:
-        Path: The corresponding output directory.
+        tuple[Path, Path]: The corresponding super-resolution and downscaling directories.
     
     Raises:
         ValueError: If scale factor is unsupported.
     """
     if SUPER_RESOLUTION_PAR == 2:
-        output_dir = IMAGES_SR_X2_DIR
+        super_res_dir = IMAGES_SR_X2_DIR
+        downscaling_dir = IMAGES_DOWNSIZED_X2_DIR
     elif SUPER_RESOLUTION_PAR == 3:
-        output_dir = IMAGES_SR_X3_DIR
+        super_res_dir = IMAGES_SR_X3_DIR
+        downscaling_dir = IMAGES_DOWNSIZED_X3_DIR
     elif SUPER_RESOLUTION_PAR == 4:
-        output_dir = IMAGES_SR_X4_DIR
+        super_res_dir = IMAGES_SR_X4_DIR
+        downscaling_dir = IMAGES_DOWNSIZED_X4_DIR
     else:
         raise ValueError("Unsupported super resolution scale. Supported values are 2, 3, or 4.")
     
-    output_dir.mkdir(parents=True, exist_ok=True)
-    return output_dir
+    os.makedirs(super_res_dir, exist_ok=True)
+    os.makedirs(downscaling_dir, exist_ok=True)
+
+    return super_res_dir, downscaling_dir
 
 
-def create_super_resolution_images(image_paths: list[str]):
+def create_super_resolution_images(image_paths: list[str], input_dir: Path, output_dir: Path):
     """
     Apply super-resolution model to a list of input images and save the results.
     
     Args:
         image_paths (list[str]): Filenames of images in the input directory.
+        input_dir (Path): Directory containing original images.
+        output_dir (Path): Directory to save super-resolved images.
     """
-    output_dir = check_super_resolution_output_dir()
     print(f"Super-resolution output directory: {output_dir}")
     
     for img_filename in tqdm(image_paths, desc="Super-resolution"):
-        img_path = IMAGES_INPUT_DIR / img_filename
+        img_path = input_dir / img_filename
 
         try:
             img_np = np.array(Image.open(img_path).convert("RGB"))
@@ -73,16 +79,17 @@ def create_super_resolution_images(image_paths: list[str]):
         output_img.save(output_path)
 
 
-def create_personalized_downscaling(image_paths: list[str]):
+def create_personalized_downscaling(image_paths: list[str], super_resolution_dir: Path, downscaling_dir: Path):
     """
     Resize super-resolved images to match target physical ruler dimensions
     for 400 PPI or 600 PPI output resolution.
 
     Args:
         image_paths (list[str]): Filenames of super-resolved images.
+        super_resolution_dir (Path): Where to find SR images.
+        downscaling_dir (Path): Where to save resized images.
     """
-    super_resolution_dir = check_super_resolution_output_dir()
-    print(f"Personalized downscaling output directory: {IMAGES_DOWNSIZED_DIR}")
+    print(f"Personalized downscaling output directory: {downscaling_dir}")
     
     for img_filename in tqdm(image_paths, desc="Downscaling"):
         img_path = super_resolution_dir / img_filename
@@ -117,8 +124,8 @@ def create_personalized_downscaling(image_paths: list[str]):
         new_height = int(image.height * scale_factor)
 
         resized_img = image.resize((new_width, new_height), resample=Image.LANCZOS)
-        output_path = IMAGES_DOWNSIZED_DIR / img_filename
-        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path = downscaling_dir / img_filename
+        os.makedirs(output_path.parent, exist_ok=True)
         resized_img.save(output_path, dpi=(requested_PPI, requested_PPI))
 
 
@@ -132,14 +139,16 @@ if __name__ == "__main__":
         verbosity=True,
     )
 
-    # Ensure output directory exists
-    super_resolution_dir = check_super_resolution_output_dir()
-    super_resolution_dir.mkdir(parents=True, exist_ok=True)
+    # Define input directory (can be set from Colab memory or copied drive)
+    input_dir = IMAGES_INPUT_DIR
+
+    # Ensure output directories exist
+    super_resolution_dir, downscaling_dir = check_super_resolution_output_dir()
 
     # Apply super-resolution to input images
-    image_paths = os.listdir(IMAGES_INPUT_DIR)
-    create_super_resolution_images(image_paths)
+    image_paths = os.listdir(input_dir)
+    create_super_resolution_images(image_paths, input_dir, super_resolution_dir)
 
     # Apply personalized downscaling to super-resolved images
     sr_images = os.listdir(super_resolution_dir)
-    create_personalized_downscaling(sr_images)
+    create_personalized_downscaling(sr_images, super_resolution_dir, downscaling_dir)
