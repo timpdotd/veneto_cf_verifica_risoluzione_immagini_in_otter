@@ -142,6 +142,17 @@ if __name__ == "__main__":
     # Define input directory (can be set from Colab memory or copied drive)
     input_dir = IMAGES_INPUT_DIR
 
+    for dirpath, dirnames, filenames in os.walk(input_dir):
+        print(f"Currently looking in: {dirpath}")
+        
+        print(f"\n📂 Sottodirectory: {dirpath}")
+
+        for file in filenames:
+            file_path = os.path.join(dirpath, file)
+            print(f"  📄 File: {file_path}")
+            print('-' * 40)
+
+    
     # Ensure output directories exist
     super_resolution_dir, downscaling_dir = check_super_resolution_output_dir()
 
@@ -152,3 +163,4 @@ if __name__ == "__main__":
     # Apply personalized downscaling to super-resolved images
     sr_images = os.listdir(super_resolution_dir)
     create_personalized_downscaling(sr_images, super_resolution_dir, downscaling_dir)
+    

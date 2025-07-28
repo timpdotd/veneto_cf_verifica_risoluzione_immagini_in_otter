@@ -1,10 +1,10 @@
 import os
 from typing import Any, Dict, List, Tuple, Optional  
 
-
+import torch  # NOQA
 import numpy as np
 import onnxruntime as ort
-import torch  # NOQA
+
 from cryptography.fernet import Fernet
 
 from .tiling_image_loader import SA_Tiling_ImageLoader
@@ -43,19 +43,14 @@ class SA_SuperResolution:
     def _model_definition(self, models_dir: str) -> str:
         return os.path.join(models_dir, f"edsr_{self.scale}x.ven")
 
-    def _decrypt_model(self, gpu_id: int, verbosity: bool = False, decryption_key: Optional[bytes] = None
-        ) -> Tuple[ort.InferenceSession, str]:
- 
+    def _decrypt_model(
+        self,
+        gpu_id: int,
+        verbosity: bool = False,
+        decryption_key: Optional[bytes] = None
+    ) -> Tuple[ort.InferenceSession, str]:
         """
         Decodes an encrypted ONNX model and initializes an ONNX Runtime inference session.
-
-        Args:
-            gpu_id (int): Index of the GPU to use. CPU is -1
-            verbosity (bool): Verbosity of the model printing. Defaults is False.
-            decryption_key (bytes, optional): The key used to decrypt the model. If not provided, it uses a default key.
-
-        Returns:
-            Tuple[ort.InferenceSession, str]: A tuple containing the ONNX inference session and the model's input name.
         """
         with open(self.encrypted_model_path, "rb") as encrypted_file:
             encrypted_model = encrypted_file.read()
@@ -68,42 +63,48 @@ class SA_SuperResolution:
         fernet = Fernet(key)
         decrypted_model = fernet.decrypt(encrypted_model)
 
+        # Provider list with fallback
         providers: List[str | Tuple[str, Dict[str, Any]]] = [
             "CPUExecutionProvider"
-        ]  # Always include CPU provider
-        if gpu_id >= 0:
-            providers.insert(
-                0,
-                (
-                    "CUDAExecutionProvider",
-                    {
-                        "device_id": gpu_id,
-                        "arena_extend_strategy": "kNextPowerOfTwo",
-                        "gpu_mem_limit": 2 * 1024 * 1024 * 1024,
-                        "cudnn_conv_algo_search": "EXHAUSTIVE",
-                        "do_copy_in_default_stream": True,
-                    },
-                ),
-            )
-        model = ort.InferenceSession(decrypted_model, providers=providers)
-        input_name = model.get_inputs()[0].name
-        model_name = os.path.basename(self.encrypted_model_path)
-        if verbosity is True:
-            if torch.cuda.is_available() and gpu_id >= 0:
-                provider_list = model.get_providers()
-                if "CUDAExecutionProvider" in provider_list:
-                    print(f" -> Init {model_name} Neural Network on GPU")
+        ]
+
+        if gpu_id >= 0 and ort.get_device() == "GPU":
+            providers.insert(0, (
+                "CUDAExecutionProvider",
+                {
+                    "device_id": gpu_id,
+                    "arena_extend_strategy": "kNextPowerOfTwo",
+                    "gpu_mem_limit": 2 * 1024 * 1024 * 1024,
+                    "cudnn_conv_algo_search": "EXHAUSTIVE",
+                    "do_copy_in_default_stream": True,
+                }
+            ))
+
+        try:
+            model = ort.InferenceSession(decrypted_model, providers=providers)
+            input_name = model.get_inputs()[0].name
+            model_name = os.path.basename(self.encrypted_model_path)
+
+            if verbosity:
+                print(f"✅ ONNX providers available: {ort.get_available_providers()}")
+                print(f"✅ ONNX session using: {model.get_providers()}")
+
+                if "CUDAExecutionProvider" in model.get_providers():
+                    print(f"🚀 {model_name} initialized on GPU (CUDA)")
                 else:
-                    print(
-                        f" -> GPU available, but there was a problem initializing the model {model_name} on it. Initialization of the model in CPU"
-                    )
-            elif gpu_id < 0:
-                print(f"Initializing {model_name} Neural Network on CPU")
-            else:
-                print(
-                    f" -> CUDA not available. Initializing {model_name} Neural Network on CPU"
-                )
-        return model, input_name
+                    print(f"🖥️ {model_name} initialized on CPU")
+
+            return model, input_name
+
+        except Exception as e:
+            print(f"❌ Failed to initialize model on GPU: {e}")
+            print("➡️ Falling back to CPUExecutionProvider")
+
+            # Retry with CPU only
+            model = ort.InferenceSession(decrypted_model, providers=["CPUExecutionProvider"])
+            input_name = model.get_inputs()[0].name
+            return model, input_name
+
 
     def _inference(self, tile: torch.Tensor) -> torch.Tensor:
         """
